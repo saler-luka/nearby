@@ -1,0 +1,858 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Nearby</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<style>
+  :root {
+    --land: #1d3045;
+    --water: #142334;
+    --panel: rgba(17, 30, 45, 0.84);
+    --panel-solid: #132233;
+    --card: rgba(255, 255, 255, 0.04);
+    --card-hover: rgba(255, 255, 255, 0.08);
+    --line: rgba(255, 255, 255, 0.09);
+    --text: #eaf0f6;
+    --muted: #8fa3b8;
+    --peach: #ffb385;
+    --peach-strong: #ff9a66;
+    --peach-ink: #2a1608;
+    --radius: 16px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body {
+    background: var(--water); color: var(--text);
+    font: 14px/1.45 Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  #map { position: fixed; inset: 0; }
+
+  /* ---------- Panel ---------- */
+  .panel {
+    position: fixed; top: 16px; left: 16px; bottom: 16px; width: 380px;
+    background: var(--panel); backdrop-filter: blur(16px) saturate(1.2); -webkit-backdrop-filter: blur(16px) saturate(1.2);
+    border: 1px solid var(--line); border-radius: 20px;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+    display: flex; flex-direction: column; overflow: hidden; z-index: 2;
+  }
+  .handle { display: none; }
+  header { display: flex; align-items: center; gap: 10px; padding: 18px 18px 12px; }
+  .brand { font-weight: 700; font-size: 18px; letter-spacing: -0.02em; display: flex; align-items: center; gap: 8px; }
+  .brand .logo {
+    width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center;
+    background: linear-gradient(135deg, var(--peach), var(--peach-strong)); color: var(--peach-ink); font-size: 14px;
+  }
+  .where { margin-left: auto; text-align: right; line-height: 1.2; min-width: 0; }
+  .where small { display: block; font-size: 11px; color: var(--muted); }
+  .where b { font-weight: 600; color: var(--peach); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; max-width: 200px; }
+
+  .search { padding: 0 18px 12px; position: relative; }
+  .suggest {
+    position: absolute; left: 18px; right: 18px; top: calc(100% - 6px); z-index: 5;
+    background: var(--panel-solid); border: 1px solid var(--line); border-radius: 12px;
+    box-shadow: 0 16px 40px rgba(0,0,0,.45); padding: 6px; max-height: 320px; overflow-y: auto;
+  }
+  .suggest .label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: 6px 10px 4px; }
+  .sug {
+    display: flex; width: 100%; align-items: center; gap: 10px; text-align: left; cursor: pointer;
+    font: inherit; color: var(--text); background: none; border: 0; border-radius: 8px; padding: 8px 10px;
+  }
+  .sug:hover, .sug.on { background: var(--card-hover); }
+  .sug .pin { color: var(--peach); flex: none; }
+  .sug .meta { color: var(--muted); font-size: 12px; margin-left: auto; text-align: right; }
+  .search input {
+    width: 100%; font: inherit; color: var(--text);
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 11px 14px 11px 38px; outline: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%238fa3b8' stroke-width='2'%3E%3Ccircle cx='7' cy='7' r='5'/%3E%3Cpath d='M11 11l3.5 3.5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: 13px center;
+  }
+  .search input:focus { border-color: rgba(255, 179, 133, 0.5); }
+  .search input::placeholder { color: var(--muted); }
+
+  .chips { display: flex; gap: 6px; padding: 0 18px 14px; overflow-x: auto; scrollbar-width: none; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip {
+    flex: none; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;
+    padding: 7px 12px; border-radius: 999px; font-size: 13px; font-weight: 500;
+    background: var(--card); border: 1px solid var(--line); color: var(--muted); transition: all .15s;
+  }
+  .chip input { display: none; }
+  .chip:has(input:checked) { background: var(--peach); border-color: var(--peach); color: var(--peach-ink); }
+  .chip .n { font-size: 11px; opacity: .7; font-variant-numeric: tabular-nums; }
+
+  .radius { padding: 0 18px 14px; border-bottom: 1px solid var(--line); }
+  .radius-label { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .radius-label b { color: var(--text); font-weight: 600; }
+  input[type="range"] { width: 100%; accent-color: var(--peach); margin: 0; }
+
+  .status { font-size: 12px; color: var(--muted); padding: 10px 18px 4px; min-height: 30px; display: flex; align-items: center; gap: 8px; }
+  .status button { font: inherit; color: var(--peach-ink); background: var(--peach); border: 0; border-radius: 999px; padding: 3px 10px; cursor: pointer; }
+
+  /* ---------- Results ---------- */
+  .results { list-style: none; margin: 0; padding: 4px 10px 14px; overflow-y: auto; flex: 1; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.15) transparent; }
+  .card {
+    padding: 12px; border-radius: 14px; cursor: pointer; transition: background .15s;
+    border: 1px solid transparent; margin-bottom: 2px;
+  }
+  .card:hover { background: var(--card-hover); }
+  .card.active { background: rgba(255, 179, 133, 0.08); border-color: rgba(255, 179, 133, 0.35); }
+  .card-top { display: flex; gap: 12px; align-items: flex-start; }
+  .ico {
+    width: 38px; height: 38px; flex: none; border-radius: 12px; display: grid; place-items: center; font-size: 18px;
+    background: color-mix(in srgb, var(--c) 18%, transparent);
+  }
+  .card-main { flex: 1; min-width: 0; }
+  .title { font-weight: 600; font-size: 15px; line-height: 1.25; overflow-wrap: anywhere; }
+  .sub { color: var(--muted); font-size: 12.5px; margin-top: 2px; text-transform: capitalize; }
+  .walk { text-align: right; flex: none; font-size: 13px; font-weight: 600; color: var(--peach); font-variant-numeric: tabular-nums; }
+  .walk small { display: block; color: var(--muted); font-weight: 400; font-size: 11px; }
+  .badges { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0 0 50px; }
+  .badge { font-size: 11.5px; padding: 2px 8px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); color: var(--muted); }
+  .details { display: none; margin: 10px 0 0 50px; }
+  .card.active .details { display: block; }
+  .hours { font-size: 12.5px; color: var(--muted); margin-bottom: 10px; overflow-wrap: anywhere; }
+  .actions { display: flex; flex-wrap: wrap; gap: 6px; }
+  .actions a {
+    font-size: 12.5px; font-weight: 600; text-decoration: none; color: var(--text);
+    padding: 7px 11px; border-radius: 10px; background: var(--card-hover); border: 1px solid var(--line);
+  }
+  .actions a:hover { border-color: rgba(255, 179, 133, 0.5); }
+  .actions a.primary { background: var(--peach); color: var(--peach-ink); border-color: var(--peach); }
+  .empty { text-align: center; color: var(--muted); padding: 32px 16px; }
+  .skeleton { cursor: default; }
+  .skeleton .ico, .skeleton .bar { background: rgba(255,255,255,.06); animation: pulse 1.2s ease-in-out infinite; }
+  .skeleton .bar { height: 12px; border-radius: 6px; margin: 4px 0 8px; width: 70%; }
+  .skeleton .bar.short { width: 40%; }
+  @keyframes pulse { 50% { opacity: .45; } }
+
+  /* ---------- Menu viewer ---------- */
+  .modal {
+    position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 24px;
+    background: rgba(8, 15, 24, 0.6); backdrop-filter: blur(4px);
+  }
+  .modal[hidden] { display: none; }
+  .menu-box {
+    width: min(760px, 100%); height: min(88vh, 1000px); display: flex; flex-direction: column;
+    background: var(--panel-solid); border: 1px solid var(--line); border-radius: 20px; overflow: hidden;
+    box-shadow: 0 30px 80px rgba(0,0,0,.5);
+  }
+  .menu-bar { display: flex; align-items: center; gap: 10px; padding: 12px 14px 12px 18px; border-bottom: 1px solid var(--line); }
+  .menu-bar > div { flex: 1; min-width: 0; line-height: 1.2; }
+  .menu-bar small { display: block; font-size: 11px; color: var(--muted); }
+  .menu-bar b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .menu-bar a { color: var(--peach); text-decoration: none; font-size: 13px; font-weight: 600; white-space: nowrap; }
+  .menu-bar button { font: inherit; font-size: 16px; color: var(--text); background: var(--card-hover); border: 0; width: 34px; height: 34px; border-radius: 50%; cursor: pointer; }
+  #menuFrame { flex: 1; width: 100%; border: 0; background: #fff; }
+  .menu-hint { font-size: 11.5px; color: var(--muted); padding: 8px 18px; border-top: 1px solid var(--line); }
+
+  /* ---------- Map bits ---------- */
+  .fab {
+    position: fixed; right: 16px; bottom: 44px; z-index: 2;
+    width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--line); cursor: pointer;
+    background: var(--panel); backdrop-filter: blur(12px); color: var(--peach);
+    display: grid; place-items: center; box-shadow: 0 8px 24px rgba(0,0,0,.35);
+  }
+  .fab:hover { background: var(--panel-solid); }
+  .you {
+    width: 22px; height: 22px; border-radius: 50%; background: var(--peach); border: 3px solid #fff; cursor: grab;
+    box-shadow: 0 0 0 8px rgba(255, 179, 133, 0.25), 0 4px 12px rgba(0,0,0,.4);
+  }
+  .maplibregl-ctrl-group { background: var(--panel) !important; backdrop-filter: blur(12px); border: 1px solid var(--line); box-shadow: none !important; }
+  .maplibregl-ctrl-group button + button { border-top-color: var(--line) !important; }
+  .maplibregl-ctrl-group button .maplibregl-ctrl-icon { filter: invert(1) brightness(.85); }
+  .maplibregl-ctrl-attrib { background: rgba(17,30,45,.7) !important; color: var(--muted); font-size: 10px; }
+  .maplibregl-ctrl-attrib a { color: var(--muted) !important; }
+  .maplibregl-ctrl-attrib-button { filter: invert(1); }
+  .maplibregl-ctrl.maplibregl-ctrl-attrib.maplibregl-compact { background: rgba(255,255,255,.85) !important; }
+  .maplibregl-ctrl.maplibregl-ctrl-attrib.maplibregl-compact-show { background: rgba(17,30,45,.85) !important; }
+
+  /* ---------- Mobile: bottom sheet ---------- */
+  @media (max-width: 760px) {
+    .panel { top: auto; left: 0; right: 0; bottom: 0; width: auto; height: 62vh; border-radius: 22px 22px 0 0; border-bottom: 0; transition: height .25s ease; }
+    .panel.collapsed { height: 214px; }
+    .panel.collapsed .results { visibility: hidden; }
+    .handle { display: block; width: 100%; padding: 10px 0 0; background: none; border: 0; cursor: pointer; }
+    .handle::before { content: ""; display: block; width: 40px; height: 4px; border-radius: 4px; background: rgba(255,255,255,.25); margin: 0 auto; }
+    header { padding-top: 8px; }
+    header, .search, .chips, .radius { padding-left: 16px; padding-right: 16px; }
+    .fab { bottom: calc(62vh + 12px); transition: bottom .25s ease; }
+    .panel.collapsed ~ .fab { bottom: 226px; }
+    .modal { padding: 0; }
+    .menu-box { width: 100%; height: 100%; border-radius: 0; border: 0; }
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<aside class="panel" id="panel">
+  <button class="handle" id="handle" aria-label="Expand or collapse list"></button>
+  <header>
+    <div class="brand"><span class="logo">◆</span>Nearby</div>
+    <div class="where"><small>Exploring</small><b id="where">Split</b></div>
+  </header>
+  <div class="search">
+    <input type="search" id="filter" placeholder="Search a town, or pizza, seafood…" autocomplete="off"
+           role="combobox" aria-expanded="false" aria-controls="suggest">
+    <div class="suggest" id="suggest" role="listbox" hidden></div>
+  </div>
+  <div class="chips" id="cats"></div>
+  <div class="radius">
+    <div class="radius-label"><span>Within <b id="radiusVal"></b></span><span id="walkVal"></span></div>
+    <input type="range" id="radius" min="100" max="3000" step="50" value="600" aria-label="Search radius">
+  </div>
+  <div class="status" id="status"></div>
+  <ul class="results" id="results"></ul>
+</aside>
+
+<button class="fab" id="locate" title="Use my location" aria-label="Use my location">
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+</button>
+
+<div class="modal" id="menuModal" hidden>
+  <div class="menu-box" role="dialog" aria-modal="true" aria-labelledby="menuTitle">
+    <div class="menu-bar">
+      <div><small>Menu</small><b id="menuTitle"></b></div>
+      <a id="menuExternal" target="_blank" rel="noopener">Open in new tab ↗</a>
+      <button id="menuClose" aria-label="Close menu">✕</button>
+    </div>
+    <iframe id="menuFrame" title="Restaurant menu" referrerpolicy="no-referrer"
+            sandbox="allow-scripts allow-same-origin allow-popups allow-forms"></iframe>
+    <div class="menu-hint">Page blank? Some restaurants don't allow their menu to be shown inside other sites. Use “Open in new tab”.</div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script>
+// ======================= Config =======================
+const ENDPOINTS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+];
+
+const CATS = {
+  restaurant: { label: 'Restaurants', icon: '🍽️', color: '#ff9a66', filters: ['["amenity"="restaurant"]'] },
+  cafe:       { label: 'Cafés',       icon: '☕', color: '#e0b07a', filters: ['["amenity"="cafe"]'] },
+  bar:        { label: 'Bars',        icon: '🍸', color: '#b9a3ff', filters: ['["amenity"~"^(bar|pub|biergarten|nightclub)$"]'] },
+  fast_food:  { label: 'Quick bites', icon: '🍔', color: '#ffd166', filters: ['["amenity"="fast_food"]'] },
+  sweets:     { label: 'Sweets',      icon: '🍦', color: '#ff8fb8', filters: ['["amenity"="ice_cream"]', '["shop"~"^(bakery|pastry|confectionery)$"]'] },
+  lodging:    { label: 'Stay',        icon: '🛏️', color: '#7cc4ff', filters: ['["tourism"~"^(hotel|hostel|guest_house|apartment|motel)$"]'] },
+};
+
+const CITIES = [
+  ['Split', 43.5081, 16.4402], ['Zagreb', 45.8131, 15.9775], ['Dubrovnik', 42.6407, 18.1077],
+  ['Zadar', 44.1150, 15.2250], ['Rijeka', 45.3271, 14.4422], ['Pula', 44.8700, 13.8455],
+  ['Rovinj', 45.0812, 13.6387], ['Šibenik', 43.7350, 15.8952], ['Makarska', 43.2969, 17.0178],
+  ['Hvar', 43.1725, 16.4428], ['Osijek', 45.5550, 18.6955], ['Varaždin', 46.3080, 16.3380],
+];
+
+const COLORS = {
+  land: '#1d3045', water: '#142334', park: '#22394b',
+  road: '#c9d6e3', building: '#f2a77c', buildingTall: '#ffd0ad', label: '#9db1c6',
+};
+
+// ======================= State & helpers =======================
+const state = {
+  center: { lat: CITIES[0][1], lng: CITIES[0][2] },
+  radius: 600,
+  cats: new Set(['restaurant', 'cafe', 'bar', 'fast_food']),
+  text: '',
+  venues: [],
+  byId: new Map(),
+  activeId: null,
+};
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmtDist = m => m < 1000 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toFixed(1)} km`;
+// ~80 m/min walking pace, with a 1.3× detour factor for real streets vs straight line.
+const walkMin = m => Math.max(1, Math.round((m * 1.3) / 80));
+const isMobile = () => matchMedia('(max-width: 760px)').matches;
+
+function distance(a, b) {
+  const R = 6371000, toRad = d => d * Math.PI / 180;
+  const dLat = toRad(b.lat - a.lat), dLng = toRad(b.lng - a.lng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+function circlePolygon({ lat, lng }, radius, steps = 96) {
+  const R = 6378137, coords = [];
+  for (let i = 0; i <= steps; i++) {
+    const a = (i / steps) * 2 * Math.PI;
+    coords.push([
+      lng + (radius * Math.cos(a)) / (R * Math.cos(lat * Math.PI / 180)) * 180 / Math.PI,
+      lat + (radius * Math.sin(a)) / R * 180 / Math.PI,
+    ]);
+  }
+  return { type: 'Feature', geometry: { type: 'Polygon', coordinates: [coords] } };
+}
+
+// ======================= Map style =======================
+const NAME = ['coalesce', ['get', 'name:latin'], ['get', 'name']];
+const style = {
+  version: 8,
+  glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
+  sources: { omt: { type: 'vector', url: 'https://tiles.openfreemap.org/planet' } },
+  light: { anchor: 'viewport', color: '#ffffff', intensity: 0.35, position: [1.4, 200, 35] },
+  layers: [
+    { id: 'land', type: 'background', paint: { 'background-color': COLORS.land } },
+    { id: 'park', type: 'fill', source: 'omt', 'source-layer': 'park', paint: { 'fill-color': COLORS.park, 'fill-opacity': 0.7 } },
+    { id: 'landcover', type: 'fill', source: 'omt', 'source-layer': 'landcover',
+      filter: ['in', ['get', 'class'], ['literal', ['grass', 'wood']]], paint: { 'fill-color': COLORS.park, 'fill-opacity': 0.6 } },
+    { id: 'water', type: 'fill', source: 'omt', 'source-layer': 'water', paint: { 'fill-color': COLORS.water } },
+    { id: 'roads-minor', type: 'line', source: 'omt', 'source-layer': 'transportation',
+      filter: ['in', ['get', 'class'], ['literal', ['minor', 'service', 'track', 'path', 'pedestrian']]],
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': COLORS.road, 'line-opacity': 0.28, 'line-width': ['interpolate', ['linear'], ['zoom'], 13, 0.3, 18, 1.6] } },
+    { id: 'roads-major', type: 'line', source: 'omt', 'source-layer': 'transportation',
+      filter: ['in', ['get', 'class'], ['literal', ['motorway', 'trunk', 'primary', 'secondary', 'tertiary']]],
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': COLORS.road, 'line-opacity': 0.55, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 0.5, 18, 3] } },
+    { id: 'rail', type: 'line', source: 'omt', 'source-layer': 'transportation', filter: ['==', ['get', 'class'], 'rail'],
+      paint: { 'line-color': COLORS.road, 'line-opacity': 0.3, 'line-width': 1, 'line-dasharray': [3, 2] } },
+    { id: 'buildings', type: 'fill-extrusion', source: 'omt', 'source-layer': 'building', minzoom: 13,
+      paint: {
+        'fill-extrusion-color': ['interpolate', ['linear'], ['coalesce', ['get', 'render_height'], 6], 0, COLORS.building, 40, COLORS.buildingTall],
+        'fill-extrusion-height': ['interpolate', ['linear'], ['zoom'], 13, 0, 15, ['coalesce', ['get', 'render_height'], 6]],
+        'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], 0],
+        'fill-extrusion-opacity': 0.95,
+      } },
+    { id: 'water-names', type: 'symbol', source: 'omt', 'source-layer': 'water_name',
+      layout: { 'text-field': NAME, 'text-font': ['Noto Sans Regular'], 'text-size': 13, 'text-letter-spacing': 0.08 },
+      paint: { 'text-color': COLORS.label } },
+    { id: 'road-names', type: 'symbol', source: 'omt', 'source-layer': 'transportation_name', minzoom: 15,
+      layout: { 'symbol-placement': 'line', 'text-field': NAME, 'text-font': ['Noto Sans Regular'], 'text-size': 10.5 },
+      paint: { 'text-color': COLORS.label, 'text-halo-color': COLORS.land, 'text-halo-width': 1.2 } },
+    { id: 'places', type: 'symbol', source: 'omt', 'source-layer': 'place',
+      filter: ['in', ['get', 'class'], ['literal', ['city', 'town', 'village', 'suburb', 'neighbourhood', 'quarter']]],
+      layout: { 'text-field': NAME, 'text-font': ['Noto Sans Bold'], 'text-size': ['match', ['get', 'class'], ['city', 'town'], 15, 12],
+        'text-letter-spacing': 0.05, 'text-transform': 'uppercase' },
+      paint: { 'text-color': '#dbe5ef', 'text-halo-color': COLORS.land, 'text-halo-width': 1.5 } },
+  ],
+};
+
+// ======================= Map =======================
+const map = new maplibregl.Map({
+  container: 'map', style,
+  center: [state.center.lng, state.center.lat], zoom: 15.5, pitch: 55, bearing: -18, maxPitch: 70,
+  attributionControl: false,
+});
+map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
+map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
+
+// Teardrop pin drawn on a canvas so we don't need any image assets.
+function pinImage(body, dot, scale = 1) {
+  const pr = 2, w = 28 * scale, h = 38 * scale;
+  const c = document.createElement('canvas');
+  c.width = w * pr; c.height = h * pr;
+  const x = c.getContext('2d');
+  x.scale(pr, pr);
+  const r = w / 2 - 3, cx = w / 2, cy = r + 2;
+  x.shadowColor = 'rgba(0,0,0,.45)'; x.shadowBlur = 5; x.shadowOffsetY = 2;
+  x.beginPath();
+  x.arc(cx, cy, r, Math.PI * 0.78, Math.PI * 0.22);
+  x.lineTo(cx, h - 3);
+  x.closePath();
+  const g = x.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, body[0]); g.addColorStop(1, body[1]);
+  x.fillStyle = g; x.fill();
+  x.shadowColor = 'transparent';
+  x.beginPath(); x.arc(cx, cy, r * 0.42, 0, Math.PI * 2);
+  x.fillStyle = dot; x.fill();
+  return x.getImageData(0, 0, c.width, c.height);
+}
+
+const venueSource = () => map.getSource('venues');
+
+map.on('load', () => {
+  for (const [key, c] of Object.entries(CATS)) {
+    map.addImage(`pin-${key}`, pinImage(['#ffffff', '#c3ceda'], c.color), { pixelRatio: 2 });
+  }
+  map.addImage('pin-active', pinImage(['#ffc9a6', '#ff9a66'], '#ffffff', 1.35), { pixelRatio: 2 });
+
+  map.addSource('radius', { type: 'geojson', data: circlePolygon(state.center, state.radius) });
+  map.addLayer({ id: 'radius-fill', type: 'fill', source: 'radius', paint: { 'fill-color': '#ffb385', 'fill-opacity': 0.07 } }, 'buildings');
+  map.addLayer({ id: 'radius-line', type: 'line', source: 'radius', paint: { 'line-color': '#ffb385', 'line-width': 1.5, 'line-opacity': 0.8, 'line-dasharray': [2, 2] } }, 'buildings');
+
+  map.addSource('venues', { type: 'geojson', data: { type: 'FeatureCollection', features: [] }, cluster: true, clusterMaxZoom: 15, clusterRadius: 36 });
+  map.addLayer({ id: 'clusters', type: 'circle', source: 'venues', filter: ['has', 'point_count'],
+    paint: {
+      'circle-color': 'rgba(255,255,255,0.92)',
+      'circle-radius': ['step', ['get', 'point_count'], 14, 10, 18, 40, 23],
+      'circle-stroke-color': 'rgba(255,179,133,0.55)', 'circle-stroke-width': 5,
+    } });
+  map.addLayer({ id: 'cluster-count', type: 'symbol', source: 'venues', filter: ['has', 'point_count'],
+    layout: { 'text-field': ['get', 'point_count_abbreviated'], 'text-font': ['Noto Sans Bold'], 'text-size': 12, 'text-allow-overlap': true },
+    paint: { 'text-color': '#1d3045' } });
+  map.addLayer({ id: 'pins', type: 'symbol', source: 'venues', filter: ['!', ['has', 'point_count']],
+    layout: { 'icon-image': ['concat', 'pin-', ['get', 'cat']], 'icon-anchor': 'bottom', 'icon-allow-overlap': true } });
+
+  map.addSource('active', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  map.addLayer({ id: 'active-pin', type: 'symbol', source: 'active',
+    layout: { 'icon-image': 'pin-active', 'icon-anchor': 'bottom', 'icon-allow-overlap': true } });
+
+  for (const layer of ['pins', 'clusters', 'active-pin']) {
+    map.on('mouseenter', layer, () => map.getCanvas().style.cursor = 'pointer');
+    map.on('mouseleave', layer, () => map.getCanvas().style.cursor = '');
+  }
+
+  setCenter(state.center, true, CITIES[0][0]);
+});
+
+map.on('click', e => {
+  const [hit] = map.queryRenderedFeatures(e.point, { layers: ['active-pin', 'pins', 'clusters'] });
+  if (!hit) return setCenter({ lat: e.lngLat.lat, lng: e.lngLat.lng }, false);
+  if (hit.layer.id === 'clusters') {
+    venueSource().getClusterExpansionZoom(hit.properties.cluster_id)
+      .then(zoom => map.easeTo({ center: hit.geometry.coordinates, zoom: zoom + 0.3 }));
+  } else if (hit.layer.id === 'pins') {
+    select(hit.properties.id, { fly: false });
+  }
+});
+
+// Draggable "you are here" marker.
+const youEl = document.createElement('div');
+youEl.className = 'you';
+const you = new maplibregl.Marker({ element: youEl, draggable: true }).setLngLat([state.center.lng, state.center.lat]).addTo(map);
+you.on('drag', () => {
+  const p = you.getLngLat();
+  map.getSource('radius')?.setData(circlePolygon({ lat: p.lat, lng: p.lng }, state.radius));
+});
+you.on('dragend', () => { const p = you.getLngLat(); setCenter({ lat: p.lat, lng: p.lng }, false); });
+
+function mapPadding() {
+  if (isMobile()) return { top: 60, left: 30, right: 30, bottom: $('panel').offsetHeight + 20 };
+  return { top: 60, bottom: 60, right: 80, left: $('panel').offsetWidth + 60 };
+}
+
+function fitCircle() {
+  const bounds = new maplibregl.LngLatBounds();
+  for (const p of circlePolygon(state.center, state.radius).geometry.coordinates[0]) bounds.extend(p);
+  const cam = map.cameraForBounds(bounds, { padding: mapPadding() });
+  if (cam) map.flyTo({ ...cam, zoom: cam.zoom + 0.4, bearing: map.getBearing(), pitch: map.getPitch(), duration: 1400 });
+}
+
+let whereSeq = 0;
+function setCenter(c, recenter, name) {
+  state.center = c;
+  const seq = ++whereSeq;
+  if (name) $('where').textContent = name;
+  else reverseName(c).then(n => { if (seq === whereSeq) $('where').textContent = n; });
+  you.setLngLat([c.lng, c.lat]);
+  map.getSource('radius')?.setData(circlePolygon(c, state.radius));
+  if (recenter) fitCircle();
+  search();
+}
+
+// ======================= Controls =======================
+// ---------- Town search (Photon geocoder, OSM-based, CORS-enabled, fine for type-ahead) ----------
+const PHOTON = 'https://photon.komoot.io';
+const CROATIA_BBOX = '13.2,42.3,19.5,46.6';
+const PLACE_TYPES = new Set(['city', 'town', 'village', 'suburb', 'quarter', 'neighbourhood', 'hamlet', 'island', 'locality']);
+const geoCache = new Map();
+let geoCtrl = null, geoTimer = null, suggestions = [], suggestIdx = -1;
+
+async function geocode(q) {
+  const key = q.toLowerCase();
+  if (geoCache.has(key)) return geoCache.get(key);
+  geoCtrl?.abort();
+  geoCtrl = new AbortController();
+  const url = `${PHOTON}/api/?q=${encodeURIComponent(q)}&limit=10&bbox=${CROATIA_BBOX}&osm_tag=place`;
+  const data = await fetch(url, { signal: geoCtrl.signal }).then(r => r.json());
+  const seen = new Set();
+  const results = data.features
+    .filter(f => f.properties.countrycode === 'HR' && PLACE_TYPES.has(f.properties.osm_value))
+    .map(f => ({
+      name: f.properties.name,
+      detail: [f.properties.osm_value, f.properties.county].filter(Boolean).join(' · '),
+      lng: f.geometry.coordinates[0], lat: f.geometry.coordinates[1],
+    }))
+    .filter(r => !seen.has(r.name + r.detail) && seen.add(r.name + r.detail))
+    .slice(0, 6);
+  geoCache.set(key, results);
+  return results;
+}
+
+async function reverseName({ lat, lng }) {
+  try {
+    const data = await fetch(`${PHOTON}/reverse?lat=${lat}&lon=${lng}&limit=1`).then(r => r.json());
+    const p = data.features[0]?.properties || {};
+    return p.city || p.town || p.village || p.county || 'Pinned spot';
+  } catch { return 'Pinned spot'; }
+}
+
+function showSuggestions(list, label) {
+  suggestions = list;
+  suggestIdx = -1;
+  const box = $('suggest');
+  box.hidden = !list.length;
+  $('filter').setAttribute('aria-expanded', String(!!list.length));
+  box.innerHTML = list.length ? `<div class="label">${esc(label)}</div>` + list.map((s, i) =>
+    `<button class="sug" role="option" data-i="${i}"><span class="pin">📍</span><b>${esc(s.name)}</b><span class="meta">${esc(s.detail)}</span></button>`
+  ).join('') : '';
+}
+const hideSuggestions = () => showSuggestions([], '');
+const popularTowns = () => CITIES.map(([name, lat, lng]) => ({ name, lat, lng, detail: 'popular' }));
+
+function goToTown(s) {
+  $('filter').value = '';
+  state.text = '';
+  hideSuggestions();
+  $('filter').blur();
+  setCenter({ lat: s.lat, lng: s.lng }, true, s.name);
+}
+
+$('suggest').addEventListener('mousedown', e => e.preventDefault()); // keep focus so the click lands
+$('suggest').addEventListener('click', e => {
+  const b = e.target.closest('.sug');
+  if (b) goToTown(suggestions[Number(b.dataset.i)]);
+});
+$('filter').addEventListener('focus', () => { if (!$('filter').value.trim()) showSuggestions(popularTowns(), 'Popular in Croatia'); });
+$('filter').addEventListener('blur', () => setTimeout(hideSuggestions, 150));
+$('filter').addEventListener('keydown', e => {
+  const items = [...document.querySelectorAll('.sug')];
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    if (!items.length) return;
+    e.preventDefault();
+    suggestIdx = (suggestIdx + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+    items.forEach((el, i) => el.classList.toggle('on', i === suggestIdx));
+  } else if (e.key === 'Enter') {
+    const pick = suggestions[Math.max(suggestIdx, 0)];
+    const q = $('filter').value.trim();
+    if (pick) goToTown(pick);
+    else if (q.length >= 2) {
+      // Enter pressed before suggestions arrived: look it up now and go to the top match.
+      clearTimeout(geoTimer);
+      geocode(q).then(list => list[0] && goToTown(list[0])).catch(() => {});
+    }
+  } else if (e.key === 'Escape') {
+    hideSuggestions();
+  }
+});
+
+$('locate').addEventListener('click', () => {
+  if (!navigator.geolocation) return setStatus('Location is not available in this browser.');
+  setStatus('Finding you…');
+  navigator.geolocation.getCurrentPosition(
+    pos => setCenter({ lat: pos.coords.latitude, lng: pos.coords.longitude }, true),
+    err => setStatus(`Couldn't get your location (${err.message}).`),
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+  );
+});
+
+const radiusEl = $('radius');
+function updateRadiusLabel() {
+  $('radiusVal').textContent = fmtDist(state.radius);
+  $('walkVal').textContent = `~${walkMin(state.radius)} min walk`;
+}
+radiusEl.addEventListener('input', () => {
+  state.radius = Number(radiusEl.value);
+  map.getSource('radius')?.setData(circlePolygon(state.center, state.radius));
+  updateRadiusLabel();
+});
+radiusEl.addEventListener('change', () => { fitCircle(); search(); });
+updateRadiusLabel();
+
+$('cats').innerHTML = Object.entries(CATS).map(([key, c]) =>
+  `<label class="chip"><input type="checkbox" value="${key}" ${state.cats.has(key) ? 'checked' : ''}>${c.icon} ${esc(c.label)} <span class="n" data-n="${key}"></span></label>`
+).join('');
+$('cats').addEventListener('change', e => {
+  e.target.checked ? state.cats.add(e.target.value) : state.cats.delete(e.target.value);
+  search();
+});
+
+// The same box filters the venue list as you type and suggests towns to jump to.
+$('filter').addEventListener('input', e => {
+  const q = e.target.value.trim();
+  state.text = q.toLowerCase();
+  render();
+  clearTimeout(geoTimer);
+  if (!q) return showSuggestions(popularTowns(), 'Popular in Croatia');
+  hideSuggestions(); // drop stale suggestions so Enter can't pick an outdated one
+  if (q.length < 2) return;
+  geoTimer = setTimeout(async () => {
+    try {
+      const list = await geocode(q);
+      if ($('filter').value.trim() === q) showSuggestions(list, 'Go to');
+    } catch (err) {
+      if (err.name !== 'AbortError') hideSuggestions();
+    }
+  }, 250);
+});
+$('handle').addEventListener('click', () => $('panel').classList.toggle('collapsed'));
+
+function setStatus(msg) { $('status').textContent = msg; }
+
+// ======================= Data =======================
+const cache = new Map();
+let inflight = null, debounceTimer = null;
+
+function buildQuery() {
+  const around = `(around:${state.radius},${state.center.lat.toFixed(6)},${state.center.lng.toFixed(6)})`;
+  const parts = [...state.cats].flatMap(k => CATS[k].filters.map(f => `nwr${f}${around};`));
+  return `[out:json][timeout:25];(${parts.join('')});out center tags 1500;`;
+}
+
+async function fetchOverpass(query, signal) {
+  let lastErr;
+  // Public Overpass servers often 504 under load; cycle through mirrors a few times with backoff.
+  for (let round = 0; round < 3; round++) {
+    if (round) {
+      setStatus('Busy servers, retrying…');
+      await new Promise(r => setTimeout(r, 1500 * round));
+      if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+    }
+    try { return await tryMirrors(query, signal); } catch (e) {
+      if (e.name === 'AbortError') throw e;
+      lastErr = e;
+    }
+  }
+  throw lastErr;
+}
+
+async function tryMirrors(query, signal) {
+  let lastErr;
+  for (const url of [...ENDPOINTS]) {
+    try {
+      // A busy mirror can hang for ages; give each one 12 s before moving on to the next.
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'data=' + encodeURIComponent(query),
+        signal: AbortSignal.any([signal, AbortSignal.timeout(12000)]),
+      });
+      if (res.ok) {
+        // Prefer the mirror that last worked for subsequent searches.
+        ENDPOINTS.splice(ENDPOINTS.indexOf(url), 1);
+        ENDPOINTS.unshift(url);
+        return await res.json();
+      }
+      lastErr = new Error(`HTTP ${res.status}`);
+    } catch (e) {
+      if (signal.aborted) throw e;
+      lastErr = e;
+    }
+  }
+  throw lastErr;
+}
+
+function classify(t) {
+  const a = t.amenity;
+  if (a === 'restaurant') return 'restaurant';
+  if (a === 'cafe') return 'cafe';
+  if (['bar', 'pub', 'biergarten', 'nightclub'].includes(a)) return 'bar';
+  if (a === 'fast_food') return 'fast_food';
+  if (a === 'ice_cream' || ['bakery', 'pastry', 'confectionery'].includes(t.shop)) return 'sweets';
+  if (t.tourism) return 'lodging';
+  return null;
+}
+
+function search() {
+  clearTimeout(debounceTimer);
+  // Clear old results straight away so the list never shows another town's places (or stale messages).
+  state.loading = true;
+  state.venues = [];
+  state.byId = new Map();
+  render();
+  debounceTimer = setTimeout(runSearch, 300);
+}
+
+async function runSearch() {
+  if (inflight) inflight.abort();
+  if (!state.cats.size) {
+    state.loading = false; state.venues = []; render();
+    return setStatus('Pick at least one category.');
+  }
+
+  const query = buildQuery();
+  let data = cache.get(query);
+  if (!data) {
+    const ctrl = inflight = new AbortController();
+    state.loading = true;
+    render();
+    try {
+      data = await fetchOverpass(query, ctrl.signal);
+      cache.set(query, data);
+    } catch (e) {
+      if (ctrl.signal.aborted) return;
+      state.loading = false;
+      render();
+      $('status').innerHTML = `Couldn't load places right now. <button id="retry">Try again</button>`;
+      $('retry').onclick = runSearch;
+      return;
+    } finally {
+      if (inflight === ctrl) inflight = null;
+    }
+  }
+  state.loading = false;
+
+  const seen = new Set();
+  state.venues = data.elements.flatMap(el => {
+    const id = `${el.type}/${el.id}`;
+    const lat = el.lat ?? el.center?.lat, lng = el.lon ?? el.center?.lon;
+    const tags = el.tags || {};
+    const cat = classify(tags);
+    // Unnamed places aren't useful to a visitor, so drop them.
+    if (seen.has(id) || lat == null || !cat || !tags.name) return [];
+    seen.add(id);
+    return [{ id, lat, lng, tags, cat, name: tags.name, dist: distance(state.center, { lat, lng }) }];
+  }).sort((a, b) => a.dist - b.dist);
+  state.byId = new Map(state.venues.map(v => [v.id, v]));
+  if (!state.byId.has(state.activeId)) state.activeId = null;
+  render();
+}
+
+// ======================= Render =======================
+const pretty = s => s.replace(/_/g, ' ').replace(/;/g, ', ');
+
+function subtitle(v) {
+  const t = v.tags;
+  const kind = { restaurant: 'Restaurant', cafe: 'Café', bar: pretty(t.amenity || 'bar'), fast_food: 'Quick bite',
+    sweets: t.amenity === 'ice_cream' ? 'Ice cream' : pretty(t.shop || 'bakery'), lodging: pretty(t.tourism || 'stay') }[v.cat];
+  return [kind, t.cuisine && pretty(t.cuisine)].filter(Boolean).join(' · ');
+}
+
+function badges(t) {
+  const b = [];
+  if (t.outdoor_seating === 'yes') b.push('☀️ Terrace');
+  if (['yes', 'only'].includes(t['diet:vegan'])) b.push('🌱 Vegan');
+  else if (['yes', 'only'].includes(t['diet:vegetarian'])) b.push('🥗 Veggie');
+  if (menuUrl(t)) b.push('📋 Menu online');
+  if (t.internet_access === 'wlan' || t.internet_access === 'yes') b.push('📶 Wi-Fi');
+  if (t.takeaway === 'yes') b.push('🥡 Takeaway');
+  return b;
+}
+
+const httpUrl = u => u && (/^https?:\/\//i.test(u) ? u : `https://${u}`);
+const menuUrl = t => httpUrl(t['website:menu'] || t['contact:menu'] || t['menu:url']);
+
+function actions(v) {
+  const t = v.tags;
+  const place = [v.name, [t['addr:street'], t['addr:housenumber']].filter(Boolean).join(' '), t['addr:city']].filter(Boolean).join(', ');
+  // Google Maps URLs need no API key; they open the place (with reviews, photos, prices) in Google Maps.
+  const google = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(place.includes(',') ? place : `${place} ${v.lat},${v.lng}`)}`;
+  const directions = `https://www.google.com/maps/dir/?api=1&destination=${v.lat},${v.lng}&travelmode=walking`;
+  const website = httpUrl(t.website || t['contact:website']);
+  const phone = t.phone || t['contact:phone'];
+  return [
+    `<a class="primary" href="${esc(google)}" target="_blank" rel="noopener">⭐ Reviews &amp; photos</a>`,
+    `<a href="${esc(directions)}" target="_blank" rel="noopener">🧭 Walk there</a>`,
+    menuUrl(t) && `<a href="${esc(menuUrl(t))}" data-menu="${esc(v.id)}" target="_blank" rel="noopener">📋 Menu</a>`,
+    website && `<a href="${esc(website)}" target="_blank" rel="noopener">🌐 Website</a>`,
+    phone && `<a href="tel:${esc(phone.split(';')[0].replace(/\s/g, ''))}">📞 Call</a>`,
+  ].filter(Boolean).join('');
+}
+
+function visibleVenues() {
+  return state.venues.filter(v => !state.text ||
+    `${v.name} ${v.tags.cuisine || ''} ${subtitle(v)}`.toLowerCase().includes(state.text));
+}
+
+function render() {
+  const list = visibleVenues();
+
+  const counts = {};
+  for (const v of state.venues) counts[v.cat] = (counts[v.cat] || 0) + 1;
+  document.querySelectorAll('[data-n]').forEach(el => { el.textContent = counts[el.dataset.n] || ''; });
+
+  venueSource()?.setData({
+    type: 'FeatureCollection',
+    features: list.map(v => ({ type: 'Feature', properties: { id: v.id, cat: v.cat }, geometry: { type: 'Point', coordinates: [v.lng, v.lat] } })),
+  });
+  updateActivePin();
+
+  if (state.loading) {
+    if (!/retrying/.test($('status').textContent)) setStatus('Finding places nearby…');
+    $('results').innerHTML = Array.from({ length: 5 }, () =>
+      `<li class="card skeleton"><div class="card-top"><div class="ico"></div><div class="card-main"><div class="bar"></div><div class="bar short"></div></div></div></li>`
+    ).join('');
+    return;
+  }
+
+  $('results').innerHTML = list.length ? list.map(v => {
+    const c = CATS[v.cat], b = badges(v.tags);
+    return `
+      <li class="card${v.id === state.activeId ? ' active' : ''}" data-id="${v.id}" style="--c:${c.color}">
+        <div class="card-top">
+          <div class="ico">${c.icon}</div>
+          <div class="card-main">
+            <div class="title">${esc(v.name)}</div>
+            <div class="sub">${esc(subtitle(v))}</div>
+          </div>
+          <div class="walk">${walkMin(v.dist)} min<small>${fmtDist(v.dist)}</small></div>
+        </div>
+        ${b.length ? `<div class="badges">${b.map(x => `<span class="badge">${esc(x)}</span>`).join('')}</div>` : ''}
+        <div class="details">
+          ${v.tags.opening_hours ? `<div class="hours">🕒 ${esc(pretty(v.tags.opening_hours))}</div>` : ''}
+          <div class="actions">${actions(v)}</div>
+        </div>
+      </li>`;
+  }).join('') : `<li class="empty">${state.text
+      ? `No places nearby match “${esc(state.text)}”.<br>Looking for a town? Pick it from the suggestions or press Enter.`
+      : 'Nothing here yet. Try a bigger radius or another category.'}</li>`;
+
+  setStatus(`${list.length} place${list.length === 1 ? '' : 's'} nearby`);
+}
+
+function updateActivePin() {
+  const v = state.byId.get(state.activeId);
+  map.getSource('active')?.setData({
+    type: 'FeatureCollection',
+    features: v ? [{ type: 'Feature', properties: { id: v.id }, geometry: { type: 'Point', coordinates: [v.lng, v.lat] } }] : [],
+  });
+}
+
+function select(id, { fly }) {
+  state.activeId = state.activeId === id && fly ? null : id;
+  document.querySelectorAll('.card.active').forEach(el => el.classList.remove('active'));
+  const card = document.querySelector(`.card[data-id="${CSS.escape(id)}"]`);
+  if (state.activeId && card) {
+    card.classList.add('active');
+    if (isMobile()) $('panel').classList.remove('collapsed');
+    card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+  updateActivePin();
+  const v = state.byId.get(state.activeId);
+  if (v && fly) map.flyTo({ center: [v.lng, v.lat], zoom: Math.max(map.getZoom(), 17), padding: mapPadding(), duration: 900 });
+}
+
+// ---------- In-app menu viewer ----------
+function openMenu(v) {
+  const url = menuUrl(v.tags);
+  $('menuTitle').textContent = v.name;
+  $('menuExternal').href = url;
+  $('menuFrame').src = url;
+  $('menuModal').hidden = false;
+  $('menuClose').focus();
+}
+function closeMenu() {
+  $('menuModal').hidden = true;
+  $('menuFrame').src = 'about:blank';
+}
+$('menuClose').addEventListener('click', closeMenu);
+$('menuModal').addEventListener('click', e => { if (e.target === $('menuModal')) closeMenu(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('menuModal').hidden) closeMenu(); });
+
+$('results').addEventListener('click', e => {
+  const menuLink = e.target.closest('a[data-menu]');
+  if (menuLink) {
+    e.preventDefault();
+    return openMenu(state.byId.get(menuLink.dataset.menu));
+  }
+  if (e.target.closest('a')) return;
+  const card = e.target.closest('.card[data-id]');
+  if (card) select(card.dataset.id, { fly: true });
+});
+</script>
+</body>
+</html>
