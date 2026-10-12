@@ -1,0 +1,51 @@
+name: Refresh place data
+
+on:
+  schedule:
+    - cron: '17 3 * * 1' # Mondays 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install osmium
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool
+
+      - name: Download Croatia extract (Geofabrik, updated daily)
+        run: curl -sSfL -o hr.osm.pbf https://download.geofabrik.de/europe/croatia-latest.osm.pbf
+
+      - name: Keep only places to eat, drink and stay
+        run: |
+          osmium tags-filter hr.osm.pbf \
+            nwr/amenity=restaurant,cafe,bar,pub,biergarten,nightclub,fast_food,ice_cream \
+            nwr/shop=bakery,pastry,confectionery \
+            nwr/tourism=hotel,hostel,guest_house,apartment,motel \
+            -o venues.osm.pbf
+          osmium export venues.osm.pbf -f geojsonseq -a type,id -o venues.geojsonseq
+          wc -l venues.geojsonseq
+
+      - name: Build grid files
+        shell: pwsh
+        run: ./build-data.ps1 -GeoJsonSeq venues.geojsonseq
+
+      - name: Commit and publish if places changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git add data
+          # index.json's date changes every run; only publish when actual places changed.
+          if git diff --cached --quiet -- data/cells; then echo "No place changes."; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Refresh place data"
+          git push
+          # Pushes made with GITHUB_TOKEN may not trigger a Pages build by themselves.
+          gh api -X POST "repos/${{ github.repository }}/pages/builds" || true
